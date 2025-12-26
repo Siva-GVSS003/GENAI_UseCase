@@ -1,0 +1,11 @@
+import subprocess
+
+# Hard-coded password (Bandit should flag this)
+PASSWORD = "123456"
+
+def dangerous_function():
+    # Using eval is dangerous
+    user_input = "2 + 2"
+    eval(user_input)
+
+dangerous_function()
