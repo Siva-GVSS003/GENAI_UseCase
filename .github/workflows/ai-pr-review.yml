@@ -1,35 +1,59 @@
-name: AI PR Review & SAST
+import os
+import json
+import requests
+from openai import OpenAI
 
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+# GitHub environment
+repo = os.environ["GITHUB_REPOSITORY"]   # owner/repo
+token = os.environ["GITHUB_TOKEN"]
+event_path = os.environ["GITHUB_EVENT_PATH"]
 
-permissions:
-  pull-requests: write
-  contents: read
+# Read PR number from event payload
+with open(event_path, "r") as f:
+    event = json.load(f)
 
-jobs:
-  ai-pr-review:
-    runs-on: ubuntu-latest
+pr_number = event["pull_request"]["number"]
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+# GitHub API
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Accept": "application/vnd.github.v3+json"
+}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+# Fetch PR details
+pr_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+pr_response = requests.get(pr_url, headers=headers)
+pr_response.raise_for_status()
 
-      - name: Install dependencies
-        run: |
-          pip install openai requests
+pr_data = pr_response.json()
 
-      - name: Run AI PR Review
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          python scripts/pr_review.py
+# Combine PR title + body for AI review
+pr_text = f"""
+Title: {pr_data['title']}
+
+Description:
+{pr_data.get('body', '')}
+"""
+
+# OpenAI client
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+ai_response = client.chat.completions.create(
+    model="gpt-4.1-mini",
+    messages=[
+        {"role": "system", "content": "You are a senior DevSecOps reviewer."},
+        {"role": "user", "content": f"Review this PR and identify risks:\n{pr_text}"}
+    ]
+)
+
+review_comment = ai_response.choices[0].message.content
+
+# Post comment to PR
+comment_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+requests.post(
+    comment_url,
+    headers=headers,
+    json={"body": review_comment}
+)
+
+print("✅ AI PR Review completed successfully")
